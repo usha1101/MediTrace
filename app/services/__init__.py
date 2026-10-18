@@ -25,6 +25,16 @@ from app.services.document_processor import (
     DocumentProcessor,
     InvalidDocumentError,
 )
+from app.services.embedding_service import (
+    DEFAULT_EMBEDDING_DIMENSION,
+    DEFAULT_EMBEDDING_MODEL,
+    ChunkEmbedding,
+    EmbeddingAPIError,
+    EmbeddingConfigurationError,
+    EmbeddingService,
+    EmbeddingServiceError,
+    EmbeddingValidationError,
+)
 
 __all__ = [
     # LLM Service
@@ -46,4 +56,13 @@ __all__ = [
     "DocumentProcessor",
     "DocumentProcessingError",
     "InvalidDocumentError",
+    # Embedding Service
+    "EmbeddingService",
+    "ChunkEmbedding",
+    "DEFAULT_EMBEDDING_MODEL",
+    "DEFAULT_EMBEDDING_DIMENSION",
+    "EmbeddingServiceError",
+    "EmbeddingConfigurationError",
+    "EmbeddingAPIError",
+    "EmbeddingValidationError",
 ]
