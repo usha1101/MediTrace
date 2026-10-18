@@ -58,6 +58,11 @@ from app.services.retrieval_service import (
     RetrievalVectorStoreError,
     relevance_score_to_cosine_similarity,
 )
+from app.services.safety_verification import (
+    ClinicalSafetyVerificationService,
+    SafetyVerificationError,
+    SafetyVerificationValidationError,
+)
 
 __all__ = [
     # LLM Service
@@ -109,4 +114,8 @@ __all__ = [
     "RetrievalEmbeddingError",
     "RetrievalVectorStoreError",
     "relevance_score_to_cosine_similarity",
+    # Safety Verification Service
+    "ClinicalSafetyVerificationService",
+    "SafetyVerificationError",
+    "SafetyVerificationValidationError",
 ]
