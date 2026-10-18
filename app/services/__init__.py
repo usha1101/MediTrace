@@ -48,6 +48,16 @@ from app.services.vector_store import (
     cosine_similarity_to_relevance_score,
     passage_id_to_point_id,
 )
+from app.services.retrieval_service import (
+    DEFAULT_RETRIEVAL_TOP_K,
+    RetrievalConfigurationError,
+    RetrievalEmbeddingError,
+    RetrievalService,
+    RetrievalServiceError,
+    RetrievalValidationError,
+    RetrievalVectorStoreError,
+    relevance_score_to_cosine_similarity,
+)
 
 __all__ = [
     # LLM Service
@@ -90,4 +100,13 @@ __all__ = [
     "VectorStoreSearchError",
     "cosine_similarity_to_relevance_score",
     "passage_id_to_point_id",
+    # Retrieval Service
+    "RetrievalService",
+    "DEFAULT_RETRIEVAL_TOP_K",
+    "RetrievalServiceError",
+    "RetrievalConfigurationError",
+    "RetrievalValidationError",
+    "RetrievalEmbeddingError",
+    "RetrievalVectorStoreError",
+    "relevance_score_to_cosine_similarity",
 ]
