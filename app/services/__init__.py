@@ -63,6 +63,14 @@ from app.services.safety_verification import (
     SafetyVerificationError,
     SafetyVerificationValidationError,
 )
+from app.services.soap_note_service import (
+    SOAP_NOTE_SYSTEM_INSTRUCTION,
+    DraftSOAPNoteService,
+    SOAPNoteGenerationError,
+    SOAPNoteService,
+    SOAPNoteServiceError,
+    SOAPNoteValidationError,
+)
 
 __all__ = [
     # LLM Service
@@ -118,4 +126,11 @@ __all__ = [
     "ClinicalSafetyVerificationService",
     "SafetyVerificationError",
     "SafetyVerificationValidationError",
+    # SOAP Note Service
+    "SOAPNoteService",
+    "DraftSOAPNoteService",
+    "SOAPNoteServiceError",
+    "SOAPNoteValidationError",
+    "SOAPNoteGenerationError",
+    "SOAP_NOTE_SYSTEM_INSTRUCTION",
 ]
