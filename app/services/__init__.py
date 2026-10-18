@@ -35,6 +35,19 @@ from app.services.embedding_service import (
     EmbeddingServiceError,
     EmbeddingValidationError,
 )
+from app.services.vector_store import (
+    DEFAULT_COLLECTION_NAME,
+    DEFAULT_STORAGE_PATH,
+    DEFAULT_VECTOR_DIMENSION,
+    VectorStore,
+    VectorStoreConfigurationError,
+    VectorStoreError,
+    VectorStoreInsertionError,
+    VectorStoreSearchError,
+    VectorStoreValidationError,
+    cosine_similarity_to_relevance_score,
+    passage_id_to_point_id,
+)
 
 __all__ = [
     # LLM Service
@@ -65,4 +78,16 @@ __all__ = [
     "EmbeddingConfigurationError",
     "EmbeddingAPIError",
     "EmbeddingValidationError",
+    # Vector Store Service
+    "VectorStore",
+    "DEFAULT_COLLECTION_NAME",
+    "DEFAULT_STORAGE_PATH",
+    "DEFAULT_VECTOR_DIMENSION",
+    "VectorStoreError",
+    "VectorStoreConfigurationError",
+    "VectorStoreValidationError",
+    "VectorStoreInsertionError",
+    "VectorStoreSearchError",
+    "cosine_similarity_to_relevance_score",
+    "passage_id_to_point_id",
 ]
