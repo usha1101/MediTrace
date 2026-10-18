@@ -20,6 +20,12 @@ from app.services.llm_service import (
     LLMValidationError,
 )
 
+from app.services.document_processor import (
+    DocumentProcessingError,
+    DocumentProcessor,
+    InvalidDocumentError,
+)
+
 __all__ = [
     # LLM Service
     "DEFAULT_GEMINI_MODEL",
@@ -36,4 +42,8 @@ __all__ = [
     "InvalidTranscriptError",
     "ExtractionServiceError",
     "CLINICAL_EXTRACTION_SYSTEM_INSTRUCTION",
+    # Document Processing & Chunker
+    "DocumentProcessor",
+    "DocumentProcessingError",
+    "InvalidDocumentError",
 ]

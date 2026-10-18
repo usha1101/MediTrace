@@ -498,6 +498,66 @@ class ReferencePassage(BaseModel):
         return v.strip()
 
 
+class DocumentChunk(BaseModel):
+    """
+    Model representing a deterministic reference text chunk for RAG ingestion.
+    Preserves document provenance, section context, and metadata without fabricating missing details.
+    """
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    passage_id: str = Field(..., description="Unique deterministic identifier for the passage or chunk")
+    document_id: str = Field(..., description="Unique identifier of the parent reference document")
+    text: str = Field(..., description="Verbatim normalized text content of this chunk")
+    source_title: str = Field(..., description="Title of the source publication, guideline, or label")
+    source_type: str = Field(
+        ...,
+        description="Classification of the source (e.g., 'clinical_guideline', 'drug_label', 'protocol')"
+    )
+    section: Optional[str] = Field(default=None, description="Section heading or structural location if available")
+    publication_date: Optional[str] = Field(
+        default=None,
+        description="Publication or revision date if explicitly available in source metadata"
+    )
+    chunk_index: int = Field(default=0, ge=0, description="0-based sequential chunk index within the document")
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional provenance or chunking metadata"
+    )
+
+    @field_validator("passage_id", "document_id", "text", "source_title", "source_type")
+    @classmethod
+    def validate_non_blank_fields(cls, v: str, info) -> str:
+        if not v or not v.strip():
+            raise ValueError(f"{info.field_name} must not be empty or whitespace only.")
+        return v.strip()
+
+    def to_reference_passage(self, relevance_score: Optional[float] = None) -> ReferencePassage:
+        """
+        Convert this DocumentChunk into a ReferencePassage for SOAP notes and safety review flags.
+        """
+        title_with_section = f"{self.source_title} - {self.section}" if self.section else self.source_title
+        return ReferencePassage(
+            passage_id=self.passage_id,
+            title=title_with_section,
+            content=self.text,
+            source_document=self.source_title,
+            section_or_page=self.section,
+            relevance_score=relevance_score,
+            retrieval_metadata={
+                **self.metadata,
+                "document_id": self.document_id,
+                "source_type": self.source_type,
+                "chunk_index": self.chunk_index,
+                "publication_date": self.publication_date,
+            },
+        )
+
+
+# Aliases for flexible naming across RAG components
+ReferencePassageChunk = DocumentChunk
+DocumentPassage = DocumentChunk
+
+
 # =====================================================================
 # 8. Potential Safety-Review Flags
 # =====================================================================
