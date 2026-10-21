@@ -8,6 +8,7 @@ until Member A's Clinical AI engine is integrated.
 import os
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from backend.config import settings
 from backend.schemas.consultation import (
     ConsultationRequest,
@@ -16,7 +17,9 @@ from backend.schemas.consultation import (
 )
 from backend.schemas.transcription import TranscriptionResponse
 from backend.services.clinical_ai import (
+    ClinicalEngineConfigurationError,
     ClinicalEngineInterface,
+    ClinicalWorkflowExecutionError,
     get_clinical_engine,
 )
 from backend.services.transcription import (
@@ -33,6 +36,28 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+
+@app.exception_handler(ClinicalEngineConfigurationError)
+async def clinical_engine_configuration_handler(request, exc: ClinicalEngineConfigurationError):
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": f"Clinical AI engine configuration error: {str(exc)}"},
+    )
+
+
+@app.exception_handler(ClinicalWorkflowExecutionError)
+async def clinical_workflow_execution_handler(request, exc: ClinicalWorkflowExecutionError):
+    if exc.stage == "validate_input":
+        status_code = status.HTTP_400_BAD_REQUEST
+    elif exc.stage in ("extract_clinical_information", "generate_soap_draft"):
+        status_code = status.HTTP_502_BAD_GATEWAY
+    else:
+        status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+    return JSONResponse(
+        status_code=status_code,
+        content={"detail": f"Clinical workflow execution error: {str(exc)}"},
+    )
 
 
 # CORS middleware for frontend integration
@@ -83,8 +108,7 @@ def health_check() -> HealthResponse:
     summary="Process clinical encounter transcript",
     description=(
         "Accepts ambient consultation transcript and patient metadata, "
-        "returning a structured draft SOAP note and real-time safety verification alerts. "
-        "NOTE: Currently served by MockClinicalEngine with clear mock flags until Member A connects."
+        "returning a structured draft SOAP note, evidence references, and clinical safety verification alerts."
     ),
 )
 def process_consultation(
@@ -95,6 +119,24 @@ def process_consultation(
     try:
         response = engine.generate_consultation(request)
         return response
+    except HTTPException:
+        raise
+    except ClinicalEngineConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Clinical AI engine configuration error: {str(exc)}",
+        ) from exc
+    except ClinicalWorkflowExecutionError as exc:
+        if exc.stage == "validate_input":
+            status_code = status.HTTP_400_BAD_REQUEST
+        elif exc.stage in ("extract_clinical_information", "generate_soap_draft"):
+            status_code = status.HTTP_502_BAD_GATEWAY
+        else:
+            status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        raise HTTPException(
+            status_code=status_code,
+            detail=f"Clinical workflow execution error: {str(exc)}",
+        ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

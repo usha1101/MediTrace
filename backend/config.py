@@ -14,7 +14,7 @@ class Settings(BaseModel):
     api_prefix: str = "/api/v1"
     host: str = os.getenv("MEDITRACE_HOST", "127.0.0.1")
     port: int = int(os.getenv("MEDITRACE_PORT", "8000"))
-    mock_mode: bool = True  # Set to True until Member A's Clinical AI engine is integrated
+    mock_mode: bool = os.getenv("MEDITRACE_MOCK_MODE", "false").lower() in ("true", "1", "yes")
     cors_origins: list[str] = ["*"]
     max_audio_size_bytes: int = 25 * 1024 * 1024  # 25 MB limit
     allowed_audio_extensions: list[str] = [

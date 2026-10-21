@@ -7,15 +7,62 @@ The schemas and API routes will seamlessly support your implementation.
 """
 
 from abc import ABC, abstractmethod
+import logging
+import os
 import re
 import uuid
 from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+from backend.config import settings
 from backend.schemas.consultation import (
     ConsultationRequest,
     ConsultationResponse,
     SOAPNote,
     SafetyAlert,
 )
+from app.schemas import (
+    CLINICAL_SAFETY_DISCLAIMER,
+    DraftSOAPNote,
+    MissingInformation,
+    ReferencePassage,
+    SafetyReviewFlag,
+)
+from backend.workflows.clinical_graph import (
+    ClinicalState,
+    ClinicalWorkflow,
+    ClinicalWorkflowServices,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# =====================================================================
+# Clinical Engine Exceptions
+# =====================================================================
+
+class ClinicalEngineError(Exception):
+    """Base exception for clinical engine operations."""
+    pass
+
+
+class ClinicalEngineConfigurationError(ClinicalEngineError):
+    """Raised when clinical engine cannot initialize due to missing credentials or configuration."""
+    pass
+
+
+class ClinicalWorkflowExecutionError(ClinicalEngineError):
+    """Raised when the underlying LangGraph workflow execution halts or fails."""
+
+    def __init__(
+        self,
+        message: str,
+        stage: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(message)
+        self.stage = stage
+        self.details = details or {}
 
 
 class ClinicalEngineInterface(ABC):
@@ -401,10 +448,158 @@ class MockClinicalEngine(ClinicalEngineInterface):
 
 
 
-# Engine Singleton / Factory for Dependency Injection
-_clinical_engine_instance = MockClinicalEngine()
+# =====================================================================
+# LangGraph Clinical AI Engine Adapter
+# =====================================================================
+
+class LangGraphClinicalEngine(ClinicalEngineInterface):
+    """
+    Real Clinical AI Engine adapter connecting Member A's verified clinical services
+    via the LangGraph clinical workflow orchestration layer.
+    """
+
+    def __init__(
+        self,
+        workflow: Optional[ClinicalWorkflow] = None,
+        services: Optional[ClinicalWorkflowServices] = None,
+    ):
+        if workflow is not None:
+            self.workflow = workflow
+        elif services is not None:
+            self.workflow = ClinicalWorkflow(services=services)
+        else:
+            api_key = os.getenv("GEMINI_API_KEY")
+            if not api_key or not api_key.strip():
+                raise ClinicalEngineConfigurationError(
+                    "Clinical AI engine cannot initialize: GEMINI_API_KEY environment variable "
+                    "is required in live mode. Please configure GEMINI_API_KEY or select "
+                    "explicit mock mode via MEDITRACE_MOCK_MODE=true."
+                )
+            self.workflow = ClinicalWorkflow()
+
+    def generate_consultation(self, request: ConsultationRequest) -> ConsultationResponse:
+        """Process clinical conversation through LangGraph workflow and return validated response."""
+        clean_transcript = (request.transcript or "").strip()
+        if len(clean_transcript) < 10:
+            raise ClinicalWorkflowExecutionError(
+                "Consultation transcript must be at least 10 non-whitespace characters.",
+                stage="validate_input",
+            )
+
+        workflow_input = {
+            "encounter_id": f"enc-{request.patient_id}-{uuid.uuid4().hex[:6]}",
+            "transcript": request.transcript,
+            "patient_id": request.patient_id,
+            "patient_name": request.patient_name,
+            "patient_age": request.patient_age,
+            "patient_gender": request.patient_gender,
+            "known_allergies": list(request.known_allergies or []),
+            "current_medications": list(request.current_medications or []),
+            "existing_conditions": list(request.existing_conditions or []),
+        }
+
+        try:
+            result = self.workflow.invoke(workflow_input)
+        except Exception as exc:
+            logger.error("LangGraph workflow execution failed: %s", exc)
+            raise ClinicalWorkflowExecutionError(
+                f"Clinical workflow execution crashed: {str(exc)}",
+                stage="workflow_execution",
+            ) from exc
+
+        workflow_status = result.get("workflow_status", "failed")
+        error_stage = result.get("error_stage")
+        error_msg = result.get("error")
+
+        if workflow_status == "failed":
+            raise ClinicalWorkflowExecutionError(
+                error_msg or f"Clinical workflow halted at stage '{error_stage}'",
+                stage=error_stage,
+                details={"error_stage": error_stage},
+            )
+
+        draft_soap = result.get("draft_soap_note")
+        if not draft_soap:
+            raise ClinicalWorkflowExecutionError(
+                "Workflow completed but generated no draft SOAP note.",
+                stage="generate_soap_draft",
+            )
+
+        # Build SOAPNote schema
+        soap_note = SOAPNote(
+            subjective=draft_soap.subjective,
+            objective=draft_soap.objective,
+            assessment=draft_soap.assessment,
+            plan=draft_soap.plan,
+            note_id=draft_soap.note_id,
+            status=draft_soap.status.value if hasattr(draft_soap.status, "value") else str(draft_soap.status),
+            disclaimer=draft_soap.disclaimer or CLINICAL_SAFETY_DISCLAIMER,
+            safety_flags=result.get("safety_flags", []),
+            missing_information=result.get("missing_information", []),
+            references=result.get("reference_passages", []),
+        )
+
+        # Convert SafetyReviewFlag objects into SafetyAlert objects for backward-compatibility
+        safety_alerts = []
+        for f in result.get("safety_flags", []):
+            sev = f.severity.value.upper() if hasattr(f.severity, "value") else str(f.severity).upper()
+            cat = f.category.value if hasattr(f.category, "value") else str(f.category)
+            safety_alerts.append(
+                SafetyAlert(
+                    alert_id=f.flag_id,
+                    severity=sev,
+                    category=cat,
+                    title=f.title,
+                    description=f.detail,
+                    recommendation=f.detail or "Clinician review required prior to sign-off",
+                )
+            )
+
+        icd10_codes = self._suggest_icd10(draft_soap.assessment, request.transcript)
+
+        return ConsultationResponse(
+            consultation_id=f"cons-{uuid.uuid4().hex[:8]}",
+            patient_id=request.patient_id,
+            encounter_id=result.get("encounter_id"),
+            is_mock=False,
+            engine_source="LangGraphClinicalEngine (Gemini 2.5 Flash + Qdrant RAG + Deterministic Safety)",
+            mock_disclaimer=None,
+            clinical_disclaimer=CLINICAL_SAFETY_DISCLAIMER,
+            workflow_status=workflow_status,
+            retrieval_status=result.get("retrieval_status"),
+            draft_note=soap_note,
+            safety_alerts=safety_alerts,
+            safety_flags=result.get("safety_flags", []),
+            missing_information=result.get("missing_information", []),
+            reference_passages=result.get("reference_passages", []),
+            suggested_icd10_codes=icd10_codes,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+    def _suggest_icd10(self, assessment: str, transcript: str) -> List[str]:
+        combined = f"{assessment} {transcript}".lower()
+        codes = []
+        if "pharyngitis" in combined or "throat" in combined:
+            codes.append("[SUGGESTION - Requires Clinician Review] J02.9 - Acute pharyngitis, unspecified")
+        if "cough" in combined or "bronchitis" in combined:
+            codes.append("[SUGGESTION - Requires Clinician Review] R05.9 - Cough, unspecified")
+        if "fever" in combined:
+            codes.append("[SUGGESTION - Requires Clinician Review] R50.9 - Fever, unspecified")
+        if "migraine" in combined or "headache" in combined:
+            codes.append("[SUGGESTION - Requires Clinician Review] G43.909 - Migraine, unspecified, not intractable")
+        if not codes:
+            codes.append("[SUGGESTION - Requires Clinician Review] Z00.00 - Encounter for general adult medical examination")
+        return codes
 
 
 def get_clinical_engine() -> ClinicalEngineInterface:
-    """Dependency provider for FastAPI route injection."""
-    return _clinical_engine_instance
+    """Dependency provider for FastAPI route injection.
+
+    Returns MockClinicalEngine only when explicit mock mode is active.
+    In live/production mode, returns LangGraphClinicalEngine delegating
+    to Member A's verified clinical AI workflow.
+    """
+    if settings.mock_mode:
+        return MockClinicalEngine()
+    return LangGraphClinicalEngine()
+
