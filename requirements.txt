@@ -1,4 +1,25 @@
+# --- Core Clinical AI Engine & Schemas ---
 pydantic>=2.6.0,<3.0.0
-pytest>=8.0.0
 google-genai>=2.0.0
-qdrant-client
+qdrant-client>=1.7.0
+
+# --- Workflow Orchestration ---
+langgraph>=0.2.0,<1.0.0
+
+# --- Backend REST API ---
+fastapi>=0.110.0
+uvicorn>=0.28.0
+python-multipart>=0.0.9
+httpx>=0.27.0
+
+# --- Frontend User Interface ---
+streamlit>=1.32.0
+requests>=2.31.0
+
+# --- Speech-to-Text Transcription (Modular / Optional) ---
+# faster-whisper enables local on-device private audio transcription.
+# When omitted, set MEDITRACE_STT_ENGINE=mock. Mock transcription is strictly for development and testing.
+faster-whisper>=1.0.0
+
+# --- Testing & Quality Assurance ---
+pytest>=8.0.0
