@@ -62,6 +62,27 @@ class LLMValidationError(LLMServiceError):
     pass
 
 
+def sanitize_schema_for_gemini(schema: Any) -> Any:
+    """
+    Recursively transform a JSON schema dictionary for Gemini Developer API mode.
+
+    The Gemini Developer API (via google-genai SDK in non-Vertex mode) rejects schemas
+    containing 'additionalProperties' or 'additional_properties' with a ValueError.
+    This function creates a new schema with those keys pruned from all nested objects and
+    arrays, while preserving all supported schema properties (required fields, descriptions,
+    enums, types, and nested definitions) without mutating the original input schema.
+    """
+    if isinstance(schema, dict):
+        return {
+            key: sanitize_schema_for_gemini(value)
+            for key, value in schema.items()
+            if key not in ("additionalProperties", "additional_properties")
+        }
+    if isinstance(schema, list):
+        return [sanitize_schema_for_gemini(item) for item in schema]
+    return schema
+
+
 # =====================================================================
 # Gemini LLM Service Implementation
 # =====================================================================
@@ -77,6 +98,8 @@ class GeminiLLMService:
     - Never logs API keys or sensitive clinical consultation text.
     - Strictly validates responses against requested Pydantic models.
     """
+
+    sanitize_schema_for_gemini = staticmethod(sanitize_schema_for_gemini)
 
     def __init__(
         self,
@@ -124,6 +147,26 @@ class GeminiLLMService:
         """Access the underlying google-genai Client instance."""
         return self._client
 
+    def _sanitize_error_message(self, message: Optional[str]) -> str:
+        """
+        Sanitize an error message to ensure no API keys, credentials, or consultation text leak.
+        """
+        if not message:
+            return ""
+        sanitized = str(message)
+        if hasattr(self, "_api_key") and self._api_key:
+            sanitized = sanitized.replace(self._api_key, "[REDACTED_API_KEY]")
+        # Redact common credential patterns (e.g., Google API keys, Bearer tokens)
+        import re
+        sanitized = re.sub(r"AIza[0-9A-Za-z-_]{35}", "[REDACTED_API_KEY]", sanitized)
+        sanitized = re.sub(
+            r"(?:Bearer|token|key|api_key)[:=\s]+[A-Za-z0-9_\-\.]+",
+            "[REDACTED_SECRET]",
+            sanitized,
+            flags=re.IGNORECASE,
+        )
+        return sanitized
+
     def generate_structured(
         self,
         prompt: str,
@@ -158,10 +201,14 @@ class GeminiLLMService:
                 f"response_model must be a subclass of pydantic.BaseModel, got {response_model}."
             )
 
+        # Convert Pydantic model to a sanitized JSON schema dict compatible with Gemini Developer API
+        raw_schema = response_model.model_json_schema()
+        sanitized_schema = sanitize_schema_for_gemini(raw_schema)
+
         # Configure structured output using google-genai SDK
         config_kwargs: Dict[str, Any] = {
             "response_mime_type": "application/json",
-            "response_schema": response_model,
+            "response_schema": sanitized_schema,
             "temperature": temperature,
         }
         if system_instruction and system_instruction.strip():
@@ -185,12 +232,24 @@ class GeminiLLMService:
             # Sanitized error handling: do not expose consultation text, URL query params, or secrets
             error_code = getattr(e, "code", None)
             code_str = f" (HTTP {error_code})" if error_code is not None else ""
-            error_msg = getattr(e, "message", None) or type(e).__name__
-            logger.error("Gemini API error during generation%s", code_str)
-            raise LLMAPIError(f"Gemini API error{code_str}: {error_msg}") from e
+            raw_msg = getattr(e, "message", None) or str(e) or type(e).__name__
+            sanitized_msg = self._sanitize_error_message(raw_msg)
+            logger.error("Gemini API error during generation%s: %s", code_str, sanitized_msg)
+            raise LLMAPIError(f"Gemini API error{code_str}: {sanitized_msg}") from e
         except Exception as e:
-            logger.error("Unexpected error during Gemini API call: %s", type(e).__name__)
-            raise LLMAPIError(f"Unexpected error communicating with Gemini API: {type(e).__name__}") from e
+            sanitized_msg = self._sanitize_error_message(str(e))
+            logger.error(
+                "Unexpected error during Gemini API call (%s): %s",
+                type(e).__name__,
+                sanitized_msg,
+            )
+            # Safe traceback logging with any potential secrets sanitized
+            import traceback
+            tb_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+            logger.debug("Gemini call exception traceback:\n%s", self._sanitize_error_message(tb_str))
+            raise LLMAPIError(
+                f"Unexpected error communicating with Gemini API ({type(e).__name__}): {sanitized_msg}"
+            ) from e
 
         # Validate response presence
         if response is None or not hasattr(response, "text") or response.text is None:
